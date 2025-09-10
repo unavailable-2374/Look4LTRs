@@ -24,7 +24,7 @@
 // #define UTIL_H_
 
 #pragma once
-
+#include <cstdint>
 #include <limits>
 #include <math.h>
 #include <fstream>

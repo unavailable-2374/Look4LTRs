@@ -33,6 +33,8 @@
 
 #include <vector>
 #include <string>
+#include <set>
+#include <utility>
 
 
 class DeepNesting
@@ -47,6 +49,12 @@ private:
     Red &red;
     IdentityCalculator<int32_t> &icStandard;
     IdentityCalculator<int32_t> &icRecent;
+    
+    // Maximum nesting depth limit to prevent infinite recursion
+    static constexpr int MAX_NESTING_DEPTH = 10;
+    
+    // Track visited regions to prevent infinite loops
+    std::set<std::pair<int, int>> visitedRegions;
 
     // Methods
 

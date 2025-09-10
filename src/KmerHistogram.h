@@ -8,7 +8,7 @@
 
 #ifndef KMERHISTOGRAM_H_
 #define KMERHISTOGRAM_H_
-
+#include <cstdint>
 #include <string>
 #include <vector>
 // Review these include statement

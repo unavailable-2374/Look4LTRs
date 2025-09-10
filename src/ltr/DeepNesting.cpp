@@ -96,6 +96,35 @@ void DeepNesting::findRegion() {
 }
 
 std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int removeStart, int removeLength, int level) {
+    // Check recursion depth limit at the beginning of the function
+    if (level >= MAX_NESTING_DEPTH) {
+        #pragma omp critical
+        {
+            std::cout << "Maximum nesting depth (" << MAX_NESTING_DEPTH 
+                      << ") reached at level " << level << ". Stopping recursion." << std::endl;
+        }
+        // Return empty vector to stop recursion
+        return std::vector<ModulePipeline*>();
+    }
+    
+    // Check if this region has been visited before to prevent infinite loops
+    std::pair<int, int> region = std::make_pair(removeStart, removeLength);
+    bool alreadyVisited = false;
+    #pragma omp critical
+    {
+        if (visitedRegions.find(region) != visitedRegions.end()) {
+            std::cout << "Region (" << removeStart << ", " << removeLength 
+                      << ") already visited at level " << level << ". Stopping to prevent loop." << std::endl;
+            alreadyVisited = true;
+        } else {
+            visitedRegions.insert(region);
+        }
+    }
+    
+    if (alreadyVisited) {
+        return std::vector<ModulePipeline*>();
+    }
+    
     std::string cutSeq = graphSeq.substr(0, removeStart) + graphSeq.substr(removeStart + removeLength);
     ModulePipeline *mp = new ModulePipeline{red};
     std::vector<ModulePipeline*> mpVec{mp};
@@ -116,7 +145,7 @@ std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int re
     //     delete rt;
     // }
     std::vector<RT*> r;
-
+    
     for (auto &rt : *rtVec) {
         // Searching for the recently nested found inside
         if (rt->getCaseType() == "RecentlyNestedInner") {
@@ -124,10 +153,16 @@ std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int re
             {
                 std::cout << "Found a nest at level " << level << std::endl;
             }
+            
+            // The depth check is now done at the beginning of findDeep
             auto nestModulePipeline = findDeep(cutSeq, rt->getStart(), rt->getSize(), level + 1);
-            auto nestVec = nestModulePipeline.front()->getRtVec();
-            r.insert(r.end(), nestVec->begin(), nestVec->end());
-            mpVec.insert(mpVec.end(), nestModulePipeline.begin(), nestModulePipeline.end());
+            
+            // Check if recursion returned valid results (not stopped by depth limit)
+            if (!nestModulePipeline.empty()) {
+                auto nestVec = nestModulePipeline.front()->getRtVec();
+                r.insert(r.end(), nestVec->begin(), nestVec->end());
+                mpVec.insert(mpVec.end(), nestModulePipeline.begin(), nestModulePipeline.end());
+            }
 
         }
 

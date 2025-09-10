@@ -29,6 +29,7 @@
 #include <memory>
 #include <unordered_set>
 #include <algorithm>
+#include <tuple>
 
 int main(int argc, char*argv[]) {
 
@@ -293,36 +294,53 @@ int main(int argc, char*argv[]) {
     // Finding Elements
     std::cout << std::endl;
     std::cout << "Finding Repetitive Elements..." << std::endl;
-    #pragma omp parallel for schedule(static) num_threads(pa)
+    
+    // First, collect all chromosomes from all FASTA files
+    std::vector<std::tuple<std::string, std::string, std::string, std::string*>> allChroms;
     for(int i = 0; i < fastaVec.size(); i++) {
         std::string fastaPath = fastaVec.at(i);
         std::string fastaName = LtrUtility::getFileName(fastaPath);
-
-        #pragma omp critical
-        {
-            std::cout << "Parsing " + fastaPath << std::endl;
-        }
-
+        
+        std::cout << "Reading " + fastaPath << std::endl;
+        
         FastaReader fr(fastaPath, 1000);
         auto block = fr.read();
         for (auto chrom : *block) {
-
             std::string chromName = chrom.first->substr(1);
             std::string chromOut = outPath + fastaName + "_" + chromName;
-
-            #pragma omp critical 
-            {
-                moduleMap[chromOut] = new ModulePipeline{*red};
-            }
-            ModulePipeline &mp = *moduleMap[chromOut];
-
-            // Scoring, Merging, and Detecting elements
-            mp.buildElements(chrom.second);
-
-
+            // Store fastaPath, fastaName, chromOut, and chromosome sequence pointer
+            allChroms.push_back(std::make_tuple(fastaPath, fastaName, chromOut, chrom.second));
         }
+        // Note: We'll need to handle memory management differently
+    }
+    
+    std::cout << "Processing " << allChroms.size() << " chromosomes with " << pa << " threads..." << std::endl;
+    
+    // Now process all chromosomes in parallel
+    #pragma omp parallel for schedule(dynamic) num_threads(pa)
+    for(int i = 0; i < allChroms.size(); i++) {
+        std::string fastaPath = std::get<0>(allChroms[i]);
+        std::string fastaName = std::get<1>(allChroms[i]); 
+        std::string chromOut = std::get<2>(allChroms[i]);
+        std::string* chromSeq = std::get<3>(allChroms[i]);
+        
+        #pragma omp critical
+        {
+            std::cout << "Processing chromosome: " << chromOut << std::endl;
+            moduleMap[chromOut] = new ModulePipeline{*red};
+        }
+        ModulePipeline &mp = *moduleMap[chromOut];
+        
+        // Scoring, Merging, and Detecting elements
+        mp.buildElements(chromSeq);
+    }
+    
+    // Clean up chromosome sequences
+    for(int i = 0; i < fastaVec.size(); i++) {
+        std::string fastaPath = fastaVec.at(i);
+        FastaReader fr(fastaPath, 1000);
+        auto block = fr.read();
         FastaReader::deleteBlock(block);
-
     }
     
     std::cout << "Writing Elements to Database..." << std::endl;
