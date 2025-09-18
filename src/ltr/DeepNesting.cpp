@@ -24,6 +24,7 @@
 #pragma once
 
 #include "DeepNesting.h"
+#include <map>
 
 DeepNesting::DeepNesting(std::vector<RT*>* _rtVecPtr, const std::string *_chrom, ModulePipeline &_mp, Red &_red, IdentityCalculator<int32_t> &_icStandard, IdentityCalculator<int32_t> &_icRecent) : rtVecPtr(_rtVecPtr), chrom(_chrom), mp(_mp), red(_red), icStandard(_icStandard), icRecent(_icRecent)
 {
@@ -39,6 +40,11 @@ DeepNesting::~DeepNesting()
 }
 
 void DeepNesting::findRegion() {
+    // Reset counters for each new region search
+    visitedRegions.clear();
+    regionCache.clear();
+    totalRegionsProcessed = 0;
+    
     for (auto rt : *rtVecPtr) {
         // Searching for the recently nested inside element
         if (rt->getCaseType() == "RecentlyNestedInner") {
@@ -95,37 +101,97 @@ void DeepNesting::findRegion() {
 
 }
 
-std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int removeStart, int removeLength, int level) {
-    // Check recursion depth limit at the beginning of the function
+bool DeepNesting::shouldSkipRegion(int removeStart, int removeLength, int level) {
+    // Check recursion depth limit
     if (level >= MAX_NESTING_DEPTH) {
-        #pragma omp critical
-        {
-            std::cout << "Maximum nesting depth (" << MAX_NESTING_DEPTH 
-                      << ") reached at level " << level << ". Stopping recursion." << std::endl;
+        return true;  // Silently skip without logging
+    }
+    
+    std::pair<int, int> region = std::make_pair(removeStart, removeLength);
+    bool shouldSkip = false;
+    
+    #pragma omp critical
+    {
+        // Immediately check if we've seen this exact region before
+        if (visitedRegions.find(region) != visitedRegions.end()) {
+            shouldSkip = true;
         }
-        // Return empty vector to stop recursion
+        else {
+            // Mark as visited BEFORE incrementing count to prevent race conditions
+            visitedRegions.insert(region);
+            
+            // Check visit count for similar regions (with tolerance)
+            int similarCount = 0;
+            for (const auto& visited : visitedRegions) {
+                // Check if regions overlap significantly (>80% overlap)
+                int visitedStart = visited.first;
+                int visitedLen = visited.second;
+                int overlapStart = std::max(removeStart, visitedStart);
+                int overlapEnd = std::min(removeStart + removeLength, visitedStart + visitedLen);
+                if (overlapEnd > overlapStart) {
+                    int overlapLen = overlapEnd - overlapStart;
+                    if (overlapLen > removeLength * 0.8 || overlapLen > visitedLen * 0.8) {
+                        similarCount++;
+                    }
+                }
+            }
+            
+            if (similarCount > MAX_SAME_REGION_VISITS) {
+                shouldSkip = true;
+            }
+        }
+    }
+    
+    return shouldSkip;
+}
+
+std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int removeStart, int removeLength, int level) {
+    // Global limit check
+    bool exceedsLimit = false;
+    #pragma omp critical
+    {
+        totalRegionsProcessed++;
+        if (totalRegionsProcessed > MAX_TOTAL_REGIONS) {
+            exceedsLimit = true;
+        }
+    }
+    
+    if (exceedsLimit) {
         return std::vector<ModulePipeline*>();
     }
     
-    // Check if this region has been visited before to prevent infinite loops
+    // Early termination check
+    if (shouldSkipRegion(removeStart, removeLength, level)) {
+        return std::vector<ModulePipeline*>();
+    }
+    
+    // Check cache first
     std::pair<int, int> region = std::make_pair(removeStart, removeLength);
-    bool alreadyVisited = false;
+    bool foundInCache = false;
     #pragma omp critical
     {
-        if (visitedRegions.find(region) != visitedRegions.end()) {
-            std::cout << "Region (" << removeStart << ", " << removeLength 
-                      << ") already visited at level " << level << ". Stopping to prevent loop." << std::endl;
-            alreadyVisited = true;
-        } else {
-            visitedRegions.insert(region);
+        if (regionCache.find(region) != regionCache.end()) {
+            // Found cached result
+            foundInCache = true;
         }
     }
     
-    if (alreadyVisited) {
+    if (foundInCache) {
+        return std::vector<ModulePipeline*>();
+    }
+    
+    // Optimization: Skip regions that are too large or too small
+    if (removeLength > graphSeq.length() / 4 || removeLength < 100) {
         return std::vector<ModulePipeline*>();
     }
     
     std::string cutSeq = graphSeq.substr(0, removeStart) + graphSeq.substr(removeStart + removeLength);
+    
+    // Early exit if resulting sequence is too small or too similar to original
+    if (cutSeq.length() < 1000 || cutSeq.length() > graphSeq.length() * 0.95) {
+        return std::vector<ModulePipeline*>();
+    }
+    
     ModulePipeline *mp = new ModulePipeline{red};
     std::vector<ModulePipeline*> mpVec{mp};
 
@@ -146,26 +212,38 @@ std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int re
     // }
     std::vector<RT*> r;
     
+    // Count recently nested elements to limit processing
+    int recentNestedCount = 0;
+    for (auto &rt : *rtVec) {
+        if (rt->getCaseType() == "RecentlyNestedInner") {
+            recentNestedCount++;
+        }
+    }
+    
+    // Limit the number of recently nested elements processed per level
+    const int MAX_RECENT_NESTED_PER_LEVEL = 2;  // Reduced from 5 to 2 for faster processing
+    
+    int processedCount = 0;
     for (auto &rt : *rtVec) {
         // Searching for the recently nested found inside
         if (rt->getCaseType() == "RecentlyNestedInner") {
-            #pragma omp critical
-            {
-                std::cout << "Found a nest at level " << level << std::endl;
+            if (processedCount >= MAX_RECENT_NESTED_PER_LEVEL) {
+                break;  // Stop processing after limit
             }
             
-            // The depth check is now done at the beginning of findDeep
+            // Silently process nests without logging
+            
             auto nestModulePipeline = findDeep(cutSeq, rt->getStart(), rt->getSize(), level + 1);
             
-            // Check if recursion returned valid results (not stopped by depth limit)
+            // Check if recursion returned valid results
             if (!nestModulePipeline.empty()) {
                 auto nestVec = nestModulePipeline.front()->getRtVec();
                 r.insert(r.end(), nestVec->begin(), nestVec->end());
                 mpVec.insert(mpVec.end(), nestModulePipeline.begin(), nestModulePipeline.end());
             }
-
+            
+            processedCount++;
         }
-
     }
     rtVec->insert(rtVec->end(), r.begin(), r.end());
     for (auto &rt : *rtVec) {
@@ -173,6 +251,12 @@ std::vector<ModulePipeline*> DeepNesting::findDeep(std::string &graphSeq, int re
     }
 
     rtVec->shrink_to_fit();
+
+    // Cache the results for this region
+    #pragma omp critical
+    {
+        regionCache[region] = *rtVec;
+    }
 
     LtrUtility::removeNests(*rtVec);
     return mpVec;

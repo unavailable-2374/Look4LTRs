@@ -51,10 +51,16 @@ private:
     IdentityCalculator<int32_t> &icRecent;
     
     // Maximum nesting depth limit to prevent infinite recursion
-    static constexpr int MAX_NESTING_DEPTH = 10;
+    static constexpr int MAX_NESTING_DEPTH = 3;  // Reduced to 3 for faster processing
     
-    // Track visited regions to prevent infinite loops
+    // Track visited regions to prevent infinite loops with region hash
     std::set<std::pair<int, int>> visitedRegions;
+    
+    // Cache for processed regions to avoid redundant work
+    std::map<std::pair<int, int>, std::vector<RT*>> regionCache;
+    
+    // Early termination threshold for complex regions
+    static constexpr int MAX_SAME_REGION_VISITS = 2;  // Reduced to 2 to prevent excessive loops
 
     // Methods
 
@@ -68,4 +74,14 @@ public:
     // Methods
     void findRegion();
     std::vector<ModulePipeline*> findDeep(std::string &graphSeq, int removeStart, int removeLength, int level);
+    
+    // Helper method to check if region should be skipped
+    bool shouldSkipRegion(int removeStart, int removeLength, int level);
+    
+    // Track how many times each region has been visited
+    std::map<std::pair<int, int>, int> regionVisitCount;
+    
+    // Global counter for total regions processed to prevent runaway recursion
+    int totalRegionsProcessed = 0;
+    static constexpr int MAX_TOTAL_REGIONS = 50;  // Maximum total regions to process
 };
