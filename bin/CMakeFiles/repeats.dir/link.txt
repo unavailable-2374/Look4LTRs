@@ -1,2 +1,0 @@
-/home/shuoc/tool/miniconda3/envs/PGTA/bin/x86_64-conda-linux-gnu-ar qc librepeats.a CMakeFiles/repeats.dir/src/red/Red.cpp.o
-/home/shuoc/tool/miniconda3/envs/PGTA/bin/x86_64-conda-linux-gnu-ranlib librepeats.a

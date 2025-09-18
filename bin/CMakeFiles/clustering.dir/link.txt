@@ -1,2 +1,0 @@
-/home/shuoc/tool/miniconda3/envs/PGTA/bin/x86_64-conda-linux-gnu-ar qc libclustering.a CMakeFiles/clustering.dir/src/meshclust/MeShClust.cpp.o CMakeFiles/clustering.dir/src/meshclust/ClusterInfo.cpp.o CMakeFiles/clustering.dir/src/meshclust/ClusterEvaluator.cpp.o CMakeFiles/clustering.dir/src/meshclust/GMM.cpp.o
-/home/shuoc/tool/miniconda3/envs/PGTA/bin/x86_64-conda-linux-gnu-ranlib libclustering.a
